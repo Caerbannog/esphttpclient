@@ -27,15 +27,23 @@
 
 // Internal state.
 typedef struct {
-	const char * path;
+	char * path;
 	int port;
-	const char * post_data;
-	const char * hostname;
+	char * post_data;
+	char * hostname;
 	char * buffer;
 	int buffer_size;
 	http_callback user_callback;
 } request_args;
 
+static char * strdup(const char * str)
+{
+	char * new_str = os_malloc(os_strlen(str) + 1 /*null character*/);
+	if (new_str == NULL)
+		return NULL;
+	os_strcpy(new_str, str);
+	return new_str;
+}
 
 static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned short len)
 {
@@ -78,6 +86,7 @@ static void ICACHE_FLASH_ATTR sent_callback(void * arg)
 		// The headers were sent, now send the contents.
 		PRINTF("Sending request body\n");
 		espconn_sent(conn, (uint8_t *)req->post_data, strlen(req->post_data));
+		os_free(req->post_data);
 		req->post_data = NULL;
 	}
 }
@@ -141,9 +150,13 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 
 			char * body = os_strstr(req->buffer, "\r\n\r\n") + 4;
 
-			req->user_callback(body, http_status, req->buffer);
+			if (req->user_callback != NULL) { // Callback is optional.
+				req->user_callback(body, http_status, req->buffer);
+			}
 			os_free(req->buffer);
 		}
+		os_free(req->hostname);
+		os_free(req->path);
 		os_free(req);
 	}
 	os_free(conn);
@@ -158,8 +171,6 @@ static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * ad
 	}
 	else {
 		PRINTF("DNS found %s " IPSTR "\n", hostname, IP2STR(addr));
-
-		req->hostname = hostname; // FIXME: make sure this is the hostname we asked for.
 
 		struct espconn * conn = (struct espconn *)os_malloc(sizeof(struct espconn));
 		conn->type = ESPCONN_TCP;
@@ -186,9 +197,10 @@ void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, const c
 	PRINTF("DNS request\n");
 
 	request_args * req = (request_args *)os_malloc(sizeof(request_args));
-	req->path = path; // FIXME: consider using memcpy
+	req->hostname = strdup(hostname);
+	req->path = strdup(path);
 	req->port = port;
-	req->post_data = post_data; // FIXME: consider using memcpy
+	req->post_data = strdup(post_data);
 	req->buffer_size = 1;
 	req->buffer = os_malloc(1);
 	req->buffer[0] = '\0'; // Empty string.
