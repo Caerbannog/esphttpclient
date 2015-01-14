@@ -10,7 +10,6 @@
 // FIXME: sprintf->snprintf everywhere.
 // FIXME: support null characters in responses.
 
-#include "espmissingincludes.h"
 #include "osapi.h"
 #include "user_interface.h"
 #include "espconn.h"
@@ -19,7 +18,7 @@
 
 
 // Debug output.
-#if 1
+#if 0
 #define PRINTF(...) os_printf(__VA_ARGS__)
 #else
 #define PRINTF(...)
@@ -36,9 +35,9 @@ typedef struct {
 	http_callback user_callback;
 } request_args;
 
-static char * strdup(const char * str)
+static char * esp_strdup(const char * str)
 {
-	char * new_str = os_malloc(os_strlen(str) + 1 /*null character*/);
+	char * new_str = (char *)os_malloc(os_strlen(str) + 1); // 1 for null character
 	if (new_str == NULL)
 		return NULL;
 	os_strcpy(new_str, str);
@@ -57,7 +56,7 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 	// Let's do the equivalent of a realloc().
 	const int new_size = req->buffer_size + len;
 	char * new_buffer;
-	if (new_size > BUFFER_SIZE_MAX || NULL == (new_buffer = os_malloc(new_size))) {
+	if (new_size > BUFFER_SIZE_MAX || NULL == (new_buffer = (char *)os_malloc(new_size))) {
 		os_printf("Response too long %d\n", new_size);
 		os_free(req->buffer);
 		req->buffer = NULL;
@@ -148,7 +147,7 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 			}
 			int http_status = atoi(req->buffer + strlen(version));
 
-			char * body = os_strstr(req->buffer, "\r\n\r\n") + 4;
+			char * body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 4;
 
 			if (req->user_callback != NULL) { // Callback is optional.
 				req->user_callback(body, http_status, req->buffer);
@@ -197,12 +196,12 @@ void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, const c
 	PRINTF("DNS request\n");
 
 	request_args * req = (request_args *)os_malloc(sizeof(request_args));
-	req->hostname = strdup(hostname);
-	req->path = strdup(path);
+	req->hostname = esp_strdup(hostname);
+	req->path = esp_strdup(path);
 	req->port = port;
-	req->post_data = strdup(post_data);
+	req->post_data = esp_strdup(post_data);
 	req->buffer_size = 1;
-	req->buffer = os_malloc(1);
+	req->buffer = (char *)os_malloc(1);
 	req->buffer[0] = '\0'; // Empty string.
 	req->user_callback = user_callback;
 
