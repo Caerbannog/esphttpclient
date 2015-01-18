@@ -37,9 +37,14 @@ typedef struct {
 
 static char * esp_strdup(const char * str)
 {
-	char * new_str = (char *)os_malloc(os_strlen(str) + 1); // 1 for null character
-	if (new_str == NULL)
+	if (str == NULL) {
 		return NULL;
+	}
+	char * new_str = (char *)os_malloc(os_strlen(str) + 1); // 1 for null character
+	if (new_str == NULL) {
+		os_printf("esp_strdup: malloc error");
+		return NULL;
+	}
 	os_strcpy(new_str, str);
 	return new_str;
 }
