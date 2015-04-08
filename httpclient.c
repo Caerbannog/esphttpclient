@@ -15,6 +15,7 @@
 #include "espconn.h"
 #include "mem.h"
 #include "httpclient.h"
+#include "espmissingincludes.h"
 
 
 // Debug output.
@@ -62,11 +63,10 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 	const int new_size = req->buffer_size + len;
 	char * new_buffer;
 	if (new_size > BUFFER_SIZE_MAX || NULL == (new_buffer = (char *)os_malloc(new_size))) {
-		os_printf("Response too long %d\n", new_size);
-		os_free(req->buffer);
-		req->buffer = NULL;
-		// TODO: espconn_disconnect(conn) without crashing.
-		return;
+		os_printf("Response too long (%d)\n", new_size);
+		req->buffer[0] = '\0'; // Discard the buffer to avoid using an incomplete response.
+		espconn_disconnect(conn);
+		return; // The disconnect callback will be called.
 	}
 
 	os_memcpy(new_buffer, req->buffer, req->buffer_size);
@@ -142,23 +142,29 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 	}
 	if(conn->reverse != NULL) {
 		request_args * req = (request_args *)conn->reverse;
-		if (req->buffer != NULL) {
+		int http_status = -1;
+		char * body = "";
+		if (req->buffer == NULL) {
+			os_printf("Buffer shouldn't be NULL\n");
+		}
+		else if (req->buffer[0] != '\0') {
 			// FIXME: make sure this is not a partial response, using the Content-Length header.
 
 			const char * version = "HTTP/1.1 ";
 			if (os_strncmp(req->buffer, version, strlen(version)) != 0) {
 				os_printf("Invalid version in %s\n", req->buffer);
-				return;
 			}
-			int http_status = atoi(req->buffer + strlen(version));
-
-			char * body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 4;
-
-			if (req->user_callback != NULL) { // Callback is optional.
-				req->user_callback(body, http_status, req->buffer);
+			else {
+				http_status = atoi(req->buffer + strlen(version));
+				body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 4;
 			}
-			os_free(req->buffer);
 		}
+
+		if (req->user_callback != NULL) { // Callback is optional.
+			req->user_callback(body, http_status, req->buffer);
+		}
+
+		os_free(req->buffer);
 		os_free(req->hostname);
 		os_free(req->path);
 		os_free(req);
@@ -166,12 +172,22 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 	os_free(conn);
 }
 
+static void ICACHE_FLASH_ATTR error_callback(void *arg, sint8 errType)
+{
+	PRINTF("Disconnected with error\n");
+	disconnect_callback(arg);
+}
+
 static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * addr, void * arg)
 {
 	request_args * req = (request_args *)arg;
 
 	if (addr == NULL) {
-		os_printf("DNS failed %s\n", hostname);
+		os_printf("DNS failed for %s\n", hostname);
+		if (req->user_callback != NULL) {
+			req->user_callback("", -1, "");
+		}
+		os_free(req);
 	}
 	else {
 		PRINTF("DNS found %s " IPSTR "\n", hostname, IP2STR(addr));
@@ -188,9 +204,7 @@ static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * ad
 
 		espconn_regist_connectcb(conn, connect_callback);
 		espconn_regist_disconcb(conn, disconnect_callback);
-
-		// TODO: consider using espconn_regist_reconcb (for timeouts?)
-		// cf esp8266_sdk_v0.9.1/examples/at/user/at_ipCmd.c  (TCP ARQ retransmission?)
+		espconn_regist_reconcb(conn, error_callback);
 
 		espconn_connect(conn);
 	}
@@ -221,11 +235,14 @@ void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, const c
 		// Already in the local names table (or hostname was an IP address), execute the callback ourselves.
 		dns_callback(hostname, &addr, req);
 	}
-	else if (error == ESPCONN_ARG) {
-		os_printf("DNS error %s\n", hostname);
-	}
 	else {
-		os_printf("DNS error code %d\n", error);
+		if (error == ESPCONN_ARG) {
+			os_printf("DNS arg error %s\n", hostname);
+		}
+		else {
+			os_printf("DNS error code %d\n", error);
+		}
+		dns_callback(hostname, NULL, req); // Handle all DNS errors the same way.
 	}
 }
 
@@ -290,25 +307,11 @@ void ICACHE_FLASH_ATTR http_get(const char * url, http_callback user_callback)
 	http_post(url, NULL, user_callback);
 }
 
-void http_callback_example(char * response, int http_status, char * full_response)
+void ICACHE_FLASH_ATTR http_callback_example(char * response, int http_status, char * full_response)
 {
 	os_printf("http_status=%d\n", http_status);
-	os_printf("strlen(response)=%d\n", strlen(response));
-	os_printf("strlen(full_response)=%d\n", strlen(full_response));
-	os_printf("response=%s\n(end)\n", response);
-}
-
-void http_test()
-{
-	/* Test cases:
-	http_get("https://google.com"); // Should fail.
-	http_get("http://google.com/search?q=1");
-	http_get("http://google.com");
-	http_get("http://portquiz.net:8080/");
-	http_raw_request("google.com", 80, "/search?q=2", NULL);
-	http_get("http://173.194.45.65"); // Fails if not online yet. FIXME: we should wait for DHCP to have finished before connecting.
-	*/
-
-	http_get("http://wtfismyip.com/text", http_callback_example);
-	http_post("http://httpbin.org/post", "first_word=hello&second_word=world", http_callback_example);
+	if (http_status != HTTP_STATUS_GENERIC_ERROR) {
+		os_printf("strlen(full_response)=%d\n", strlen(full_response));
+		os_printf("response=%s<EOF>\n", response);
+	}
 }

@@ -1,7 +1,17 @@
+/*
+ * ----------------------------------------------------------------------------
+ * "THE BEER-WARE LICENSE" (Revision 42):
+ * Martin d'Allens <martin.dallens@gmail.com> wrote this file. As long as you retain
+ * this notice you can do whatever you want with this stuff. If we meet some day,
+ * and you think this stuff is worth it, you can buy me a beer in return.
+ * ----------------------------------------------------------------------------
+ */
+
 #ifndef HTTPCLIENT_H
 #define HTTPCLIENT_H
 
-#define BUFFER_SIZE_MAX  5000
+#define HTTP_STATUS_GENERIC_ERROR  -1   // In case of TCP or DNS error the callback is called with this status.
+#define BUFFER_SIZE_MAX            5000 // Size of http responses that will cause an error.
 
 /*
  * "full_response" is a string containing all response headers and the response body.
