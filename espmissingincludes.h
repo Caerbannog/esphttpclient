@@ -40,7 +40,7 @@ void vPortFree(void *ptr);
 void *vPortMalloc(size_t xWantedSize);
 uint8 wifi_get_opmode(void);
 uint32 system_get_time();
-int os_random();
+unsigned long os_random();
 int rand(void);
 void ets_bzero(void *s, size_t n);
 void ets_delay_us(int ms);

@@ -25,6 +25,10 @@ Now append `lib/esphttpclient` to the following `Makefile` line and you should b
 ```
 MODULES = driver user lib/esphttpclient
 ```
+In case you want to use SSL don't forget to add `ssl` to `LIBS` in the `Makefile`
+```
+LIBS = c gcc hal pp phy net80211 lwip wpa main ssl
+```
 
 ### The dirty way
 Alternatively you could create a simple project:

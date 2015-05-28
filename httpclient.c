@@ -206,7 +206,8 @@ static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * ad
 		espconn_regist_disconcb(conn, disconnect_callback);
 		espconn_regist_reconcb(conn, error_callback);
 
-		espconn_connect(conn);
+    if (req->port == 80) espconn_connect(conn);
+    if (req->port == 443) espconn_secure_connect(conn);
 	}
 }
 
@@ -254,17 +255,23 @@ void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, const c
 void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, http_callback user_callback)
 {
 	// FIXME: handle HTTP auth with http://user:pass@host/
-	// FIXME: make https work.
 	// FIXME: get rid of the #anchor part if present.
 
 	char hostname[128] = "";
-	int port = 80;
+  int port = 80;
 
-	if (os_strncmp(url, "http://", strlen("http://")) != 0) {
-		os_printf("URL is not HTTP %s\n", url);
+  bool is_http  = os_strncmp(url, "http://",  strlen("http://"))  == 0;
+  bool is_https = os_strncmp(url, "https://", strlen("https://")) == 0;
+
+	if (is_http)
+  	url += strlen("http://"); // Get rid of the protocol.  
+  else if (is_https) {
+	  port = 443;
+  	url += strlen("https://"); // Get rid of the protocol.
+  } else {
+		os_printf("URL is not HTTP or HTTPS %s\n", url);
 		return;
 	}
-	url += strlen("http://"); // Get rid of the protocol.
 
 	char * path = os_strchr(url, '/');
 	if (path == NULL) {
