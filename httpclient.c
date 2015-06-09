@@ -30,9 +30,11 @@ typedef struct {
 	char * path;
 	int port;
 	char * post_data;
+	char * headers;
 	char * hostname;
 	char * buffer;
 	int buffer_size;
+	bool secure;
 	http_callback user_callback;
 } request_args;
 
@@ -89,7 +91,10 @@ static void ICACHE_FLASH_ATTR sent_callback(void * arg)
 	else {
 		// The headers were sent, now send the contents.
 		PRINTF("Sending request body\n");
-		espconn_sent(conn, (uint8_t *)req->post_data, strlen(req->post_data));
+		if (req->secure)
+			espconn_secure_sent(conn, (uint8_t *)req->post_data, strlen(req->post_data));
+		else
+			espconn_sent(conn, (uint8_t *)req->post_data, strlen(req->post_data));
 		os_free(req->post_data);
 		req->post_data = NULL;
 	}
@@ -105,26 +110,32 @@ static void ICACHE_FLASH_ATTR connect_callback(void * arg)
 	espconn_regist_sentcb(conn, sent_callback);
 
 	const char * method = "GET";
-	char post_headers[128] = "";
+	char post_headers[32] = "";
 
 	if (req->post_data != NULL) { // If there is data this is a POST request.
 		method = "POST";
-		os_sprintf(post_headers,
-				   "Content-Type: application/x-www-form-urlencoded\r\n"
-				   "Content-Length: %d\r\n", strlen(req->post_data));
+		os_sprintf(post_headers, "Content-Length: %d\r\n", strlen(req->post_data));
 	}
 
-	char buf[2048];
+	char buf[69 + strlen(method) + strlen(req->path) + strlen(req->hostname) +
+			 strlen(req->headers) + strlen(post_headers)];
 	int len = os_sprintf(buf,
 						 "%s %s HTTP/1.1\r\n"
 						 "Host: %s:%d\r\n"
 						 "Connection: close\r\n"
 						 "User-Agent: ESP8266\r\n"
 						 "%s"
+						 "%s"
 						 "\r\n",
-						 method, req->path, req->hostname, req->port, post_headers);
+						 method, req->path, req->hostname, req->port, req->headers, post_headers);
+	os_printf("Needed buffer size: %d\n", len);
 
-	espconn_sent(conn, (uint8_t *)buf, len);
+	if (req->secure)
+		espconn_secure_sent(conn, (uint8_t *)buf, len);
+	else
+		espconn_sent(conn, (uint8_t *)buf, len);
+	os_free(req->headers);
+	req->headers = NULL;
 	PRINTF("Sending request header\n");
 }
 
@@ -206,12 +217,16 @@ static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * ad
 		espconn_regist_disconcb(conn, disconnect_callback);
 		espconn_regist_reconcb(conn, error_callback);
 
-    if (req->port == 80) espconn_connect(conn);
-    if (req->port == 443) espconn_secure_connect(conn);
+		if (req->secure) {
+			espconn_secure_set_size(ESPCONN_CLIENT,5120); // set SSL buffer size
+			espconn_secure_connect(conn);
+		} else {
+			espconn_connect(conn);
+		}
 	}
 }
 
-void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, const char * path, const char * post_data, http_callback user_callback)
+void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback)
 {
 	PRINTF("DNS request\n");
 
@@ -219,6 +234,8 @@ void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, const c
 	req->hostname = esp_strdup(hostname);
 	req->path = esp_strdup(path);
 	req->port = port;
+	req->secure = secure;
+	req->headers = esp_strdup(headers);
 	req->post_data = esp_strdup(post_data);
 	req->buffer_size = 1;
 	req->buffer = (char *)os_malloc(1);
@@ -252,23 +269,25 @@ void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, const c
  * <host> can be a hostname or an IP address
  * <port> is optional
  */
-void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, http_callback user_callback)
+void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback)
 {
 	// FIXME: handle HTTP auth with http://user:pass@host/
 	// FIXME: get rid of the #anchor part if present.
 
 	char hostname[128] = "";
-  int port = 80;
+	int port = 80;
+	bool secure = false;
 
-  bool is_http  = os_strncmp(url, "http://",  strlen("http://"))  == 0;
-  bool is_https = os_strncmp(url, "https://", strlen("https://")) == 0;
+	bool is_http  = os_strncmp(url, "http://",  strlen("http://"))  == 0;
+	bool is_https = os_strncmp(url, "https://", strlen("https://")) == 0;
 
 	if (is_http)
-  	url += strlen("http://"); // Get rid of the protocol.  
-  else if (is_https) {
-	  port = 443;
-  	url += strlen("https://"); // Get rid of the protocol.
-  } else {
+		url += strlen("http://"); // Get rid of the protocol.
+	else if (is_https) {
+		port = 443;
+		secure = true;
+		url += strlen("https://"); // Get rid of the protocol.
+	} else {
 		os_printf("URL is not HTTP or HTTPS %s\n", url);
 		return;
 	}
@@ -306,12 +325,12 @@ void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, http_
 	PRINTF("hostname=%s\n", hostname);
 	PRINTF("port=%d\n", port);
 	PRINTF("path=%s\n", path);
-	http_raw_request(hostname, port, path, post_data, user_callback);
+	http_raw_request(hostname, port, secure, path, post_data, headers, user_callback);
 }
 
-void ICACHE_FLASH_ATTR http_get(const char * url, http_callback user_callback)
+void ICACHE_FLASH_ATTR http_get(const char * url, const char * headers, http_callback user_callback)
 {
-	http_post(url, NULL, user_callback);
+	http_post(url, NULL, headers, user_callback);
 }
 
 void ICACHE_FLASH_ATTR http_callback_example(char * response, int http_status, char * full_response)

@@ -27,7 +27,7 @@ typedef void (* http_callback)(char * response_body, int http_status, char * ful
  * Try:
  * http_get("http://wtfismyip.com/text", http_callback_example);
  */
-void ICACHE_FLASH_ATTR http_get(const char * url, http_callback user_callback);
+void ICACHE_FLASH_ATTR http_get(const char * url, const char * headers, http_callback user_callback);
 
 /*
  * Post data to a web form.
@@ -35,12 +35,12 @@ void ICACHE_FLASH_ATTR http_get(const char * url, http_callback user_callback);
  * Try:
  * http_post("http://httpbin.org/post", "first_word=hello&second_word=world", http_callback_example);
  */
-void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, http_callback user_callback);
+void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback);
 
 /*
  * Call this function to skip URL parsing if the arguments are already in separate variables.
  */
-void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, const char * path, const char * post_data, http_callback user_callback);
+void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback);
 
 /*
  * Output on the UART.
