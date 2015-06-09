@@ -15,7 +15,6 @@
 #include "espconn.h"
 #include "mem.h"
 #include "httpclient.h"
-#include "espmissingincludes.h"
 
 
 // Debug output.

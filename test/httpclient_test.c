@@ -11,7 +11,6 @@
 #include "user_interface.h"
 #include "espconn.h"
 #include "httpclient.h"
-#include "espmissingincludes.h"
 
 
 static int test_count = 0;
@@ -24,55 +23,55 @@ static void ICACHE_FLASH_ATTR test_timer_cb()
 	switch(test_count) {
 	case 0:
 		os_printf("=> IP address before network ready\n");
-		http_get("http://173.194.45.65", http_callback_example);
+		http_get("http://173.194.45.65", "", http_callback_example);
 		// This test will fail. The DHCP request returns directly, but the TCP connection hangs.
 		// FIXME: wait for network to be ready before connecting?
 		break;
 	case 1:
 		os_printf("=> Simple GET\n");
-		http_get("http://wtfismyip.com/text", http_callback_example);
+		http_get("http://wtfismyip.com/text", "", http_callback_example);
 		break;
 	case 2:
 		os_printf("=> Response too long\n");
-		http_get("http://www.wikipedia.org/", http_callback_example);
+		http_get("http://www.wikipedia.org/", "", http_callback_example);
 		break;
 	case 3:
 		os_printf("=> Connection refused\n");
-		http_get("http://att.com:1234/", http_callback_example);
+		http_get("http://att.com:1234/", "", http_callback_example);
 		break;
 	case 4:
 		os_printf("=> Empty response, wrong protocol\n");
-		http_get("http://google.com:443/", http_callback_example);
+		http_get("http://google.com:443/", "", http_callback_example);
 		break;
 	case 5:
 		os_printf("=> Invalid DNS\n");
-		http_get("http://invalid.dns/", http_callback_example);
+		http_get("http://invalid.dns/", "", http_callback_example);
 		break;
 	case 6:
 		os_printf("=> Connection time out\n");
-		http_get("http://google.com:1234/", http_callback_example);
+		http_get("http://google.com:1234/", "", http_callback_example);
 		break;
 	case 7:
 		os_printf("=> Simple POST\n");
-		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", http_callback_example);
+		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "application/x-www-form-urlencoded\r\n", http_callback_example);
 		break;
 	case 8:
 		os_printf("=> Moved\n");
-		http_get("http://wikipedia.org/", http_callback_example);
+		http_get("http://wikipedia.org/", "", http_callback_example);
 		break;
 	case 9:
 		os_printf("=> IP address, 404\n");
-		http_get("http://54.200.182.206/", http_callback_example);
+		http_get("http://54.200.182.206/", "", http_callback_example);
 		break;
 	case 10:
 		os_printf("=> Concurrent requests\n");
-		http_get("http://wtfismyip.com/text", http_callback_example);
-		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", http_callback_example);
-		http_get("http://wtfismyip.com/text", http_callback_example);
-		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", http_callback_example);
-		http_get("http://wtfismyip.com/text", http_callback_example);
-		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", http_callback_example);
-		http_get("http://wtfismyip.com/text", http_callback_example);
+		http_get("http://wtfismyip.com/text", "", http_callback_example);
+		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "application/x-www-form-urlencoded\r\n", http_callback_example);
+		http_get("http://wtfismyip.com/text", "", http_callback_example);
+		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "application/x-www-form-urlencoded\r\n", http_callback_example);
+		http_get("http://wtfismyip.com/text", "", http_callback_example);
+		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "application/x-www-form-urlencoded\r\n", http_callback_example);
+		http_get("http://wtfismyip.com/text", "", http_callback_example);
 		// FIXME: this test sometimes fails with "DNS error code -1"
 		break;
 	default:
