@@ -117,7 +117,8 @@ static void ICACHE_FLASH_ATTR connect_callback(void * arg)
 		os_sprintf(post_headers, "Content-Length: %d\r\n", strlen(req->post_data));
 	}
 
-	char buf[2048];
+	char buf[69 + strlen(method) +	strlen(req->path) +	strlen(req->hostname) +
+			 strlen(req->headers) +	strlen(post_headers)];
 	int len = os_sprintf(buf,
 						 "%s %s HTTP/1.1\r\n"
 						 "Host: %s:%d\r\n"
@@ -127,6 +128,7 @@ static void ICACHE_FLASH_ATTR connect_callback(void * arg)
 						 "%s"
 						 "\r\n",
 						 method, req->path, req->hostname, req->port, req->headers, post_headers);
+	os_printf("Needed buffer size: %d\n", len);
 
 	if (req->secure)
 		espconn_secure_sent(conn, (uint8_t *)buf, len);
