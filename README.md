@@ -48,8 +48,8 @@ mv esphttpclient/*.* user/
 ## Usage
 Include `httpclient.h` from `user_main.c` then call one of these functions:
 ```c
-void http_get(const char * url, http_callback user_callback);
-void http_post(const char * url, const char * post_data, http_callback user_callback);
+void http_get(const char * url, const char * headers, http_callback user_callback);
+void http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback);
 
 void http_callback_example(char * response, int http_status, char * full_response)
 {
@@ -64,7 +64,7 @@ void http_callback_example(char * response, int http_status, char * full_respons
 ## Example
 The following code performs a single request, then calls `http_callback_example` to display your public IP address.
 ```c
-http_get("http://wtfismyip.com/text", http_callback_example);
+http_get("http://wtfismyip.com/text", "", http_callback_example);
 ```
 
 The output looks like this:
