@@ -67,7 +67,10 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 	if (new_size > BUFFER_SIZE_MAX || NULL == (new_buffer = (char *)os_malloc(new_size))) {
 		os_printf("Response too long (%d)\n", new_size);
 		req->buffer[0] = '\0'; // Discard the buffer to avoid using an incomplete response.
-		espconn_disconnect(conn);
+		if (req->secure)
+			espconn_secure_disconnect(conn);
+		else
+			espconn_disconnect(conn);			
 		return; // The disconnect callback will be called.
 	}
 
