@@ -53,7 +53,7 @@ static void ICACHE_FLASH_ATTR test_timer_cb()
 		break;
 	case 7:
 		os_printf("=> Simple POST\n");
-		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "application/x-www-form-urlencoded\r\n", http_callback_example);
+		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "Content-Type: application/x-www-form-urlencoded\r\n", http_callback_example);
 		break;
 	case 8:
 		os_printf("=> Moved\n");
@@ -66,11 +66,11 @@ static void ICACHE_FLASH_ATTR test_timer_cb()
 	case 10:
 		os_printf("=> Concurrent requests\n");
 		http_get("http://wtfismyip.com/text", "", http_callback_example);
-		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "application/x-www-form-urlencoded\r\n", http_callback_example);
+		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "Content-Type: application/x-www-form-urlencoded\r\n", http_callback_example);
 		http_get("http://wtfismyip.com/text", "", http_callback_example);
-		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "application/x-www-form-urlencoded\r\n", http_callback_example);
+		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "Content-Type: application/x-www-form-urlencoded\r\n", http_callback_example);
 		http_get("http://wtfismyip.com/text", "", http_callback_example);
-		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "application/x-www-form-urlencoded\r\n", http_callback_example);
+		http_post("http://httpbin.org/post", "first_word=hello&second_word=world", "Content-Type: application/x-www-form-urlencoded\r\n", http_callback_example);
 		http_get("http://wtfismyip.com/text", "", http_callback_example);
 		// FIXME: this test sometimes fails with "DNS error code -1"
 		break;
