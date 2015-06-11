@@ -15,7 +15,6 @@
 #include "espconn.h"
 #include "mem.h"
 #include "httpclient.h"
-#include "espmissingincludes.h"
 
 
 // Debug output.
@@ -131,7 +130,6 @@ static void ICACHE_FLASH_ATTR connect_callback(void * arg)
 						 "%s"
 						 "\r\n",
 						 method, req->path, req->hostname, req->port, req->headers, post_headers);
-	os_printf("Needed buffer size: %d\n", len);
 
 	if (req->secure)
 		espconn_secure_sent(conn, (uint8_t *)buf, len);
