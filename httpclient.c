@@ -221,7 +221,7 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 		if (req->secure)
 			espconn_secure_disconnect(conn);
 		else
-			espconn_disconnect(conn);			
+			espconn_disconnect(conn);
 		return; // The disconnect callback will be called.
 	}
 
@@ -301,9 +301,6 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 		return;
 	}
 
-	if(conn->proto.tcp != NULL) {
-		os_free(conn->proto.tcp);
-	}
 	if(conn->reverse != NULL) {
 		request_args * req = (request_args *)conn->reverse;
 		int http_status = -1;
@@ -323,10 +320,10 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 				body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 4;
 				if(os_strstr(req->buffer, "Transfer-Encoding: chunked"))
 				{
-					int body_size = req->buffer_size - (body - req->buffer);					
+					int body_size = req->buffer_size - (body - req->buffer);
 					char chunked_decode_buffer[body_size];
 					os_memset(chunked_decode_buffer, 0, body_size);
-					// Chuncked data 
+					// Chunked data
 					chunked_decode(body, chunked_decode_buffer);
 					os_memcpy(body, chunked_decode_buffer, body_size);
 				}
@@ -341,6 +338,10 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 		os_free(req->hostname);
 		os_free(req->path);
 		os_free(req);
+	}
+	espconn_delete(conn);
+	if(conn->proto.tcp != NULL) {
+		os_free(conn->proto.tcp);
 	}
 	os_free(conn);
 }
