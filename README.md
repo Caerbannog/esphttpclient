@@ -6,8 +6,8 @@ This is a short library for ESP8266(EX) chips to make HTTP requests.
 
  * Easy to use.
  * Supports multiple requests in parallel.
- * Supports GET and POST requests.
- * Tested with Espressif SDK v1.0.0
+ * Supports POST,GET,PUT,DELETE and user defined RAW requests.
+ * Tested with Espressif SDK v1.0.0, V1.3.0, V1.4.0
 
 ## Building
 If you don't have a toolchain yet, install one with <https://github.com/pfalcon/esp-open-sdk> then get Espressif's SDK.
@@ -48,8 +48,11 @@ mv esphttpclient/*.* user/
 ## Usage
 Include `httpclient.h` from `user_main.c` then call one of these functions:
 ```c
-void http_get(const char * url, const char * headers, http_callback user_callback);
-void http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback);
+void http_request(const char * url, const char * method, const char * headers, const char * post_data, http_callback_t callback_handle);
+void http_post(const char * url, const char * headers, const char * post_data, http_callback_t callback_handle);
+void http_get(const char * url, const char * headers, http_callback_t callback_handle);
+void http_delete(const char * url, const char * headers, const char * post_data, http_callback_t callback_handle);
+void http_put(const char * url, const char * headers, const char * post_data, http_callback_t callback_handle);
 
 void http_callback_example(char * response, int http_status, char * full_response)
 {
