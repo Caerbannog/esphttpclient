@@ -7,8 +7,10 @@
  * ----------------------------------------------------------------------------
  */
 
-// FIXME: sprintf->snprintf everywhere.
-// FIXME: support null characters in responses.
+/*
+ * FIXME: sprintf->snprintf everywhere.
+ * FIXME: support null characters in responses.
+ */
 
 #include "osapi.h"
 #include "user_interface.h"
@@ -17,65 +19,66 @@
 #include "limits.h"
 #include "httpclient.h"
 
+/* Internal state. */
+typedef struct request_args_t {
+	char		* hostname;
+	int		port;
+	bool		secure;
+	char		* method;
+	char		* path;
+	char		* headers;
+	char		* post_data;
+	char		* buffer;
+	int		buffer_size;
+	int		timeout;
+	os_timer_t	timeout_timer;
+	http_callback_t callback_handle;
+} request_args_t;
 
-// Debug output.
-#if 0
-#define PRINTF(...) os_printf(__VA_ARGS__)
-#else
-#define PRINTF(...)
-#endif
-
-// Internal state.
-typedef struct {
-	char * path;
-	int port;
-	char * post_data;
-	char * headers;
-	char * hostname;
-	char * buffer;
-	int buffer_size;
-	bool secure;
-	http_callback user_callback;
-} request_args;
-
-static char * ICACHE_FLASH_ATTR esp_strdup(const char * str)
+static char * ICACHE_FLASH_ATTR esp_strdup( const char * str )
 {
-	if (str == NULL) {
-		return NULL;
+	if ( str == NULL )
+	{
+		return(NULL);
 	}
-	char * new_str = (char *)os_malloc(os_strlen(str) + 1); // 1 for null character
-	if (new_str == NULL) {
-		os_printf("esp_strdup: malloc error");
-		return NULL;
+	char * new_str = (char *) os_malloc( os_strlen( str ) + 1 ); /* 1 for null character */
+	if ( new_str == NULL )
+	{
+		HTTPCLIENT_DEBUG( "esp_strdup: malloc error" );
+		return(NULL);
 	}
-	os_strcpy(new_str, str);
-	return new_str;
-}
-
-static int ICACHE_FLASH_ATTR
-esp_isupper(char c)
-{
-    return (c >= 'A' && c <= 'Z');
-}
-
-static int ICACHE_FLASH_ATTR
-esp_isalpha(char c)
-{
-    return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
+	os_strcpy( new_str, str );
+	return(new_str);
 }
 
 
 static int ICACHE_FLASH_ATTR
-esp_isspace(char c)
+esp_isupper( char c )
 {
-    return (c == ' ' || c == '\t' || c == '\n' || c == '\12');
+	return(c >= 'A' && c <= 'Z');
 }
 
+
 static int ICACHE_FLASH_ATTR
-esp_isdigit(char c)
+esp_isalpha( char c )
 {
-    return (c >= '0' && c <= '9');
+	return( (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') );
 }
+
+
+static int ICACHE_FLASH_ATTR
+esp_isspace( char c )
+{
+	return(c == ' ' || c == '\t' || c == '\n' || c == '\12');
+}
+
+
+static int ICACHE_FLASH_ATTR
+esp_isdigit( char c )
+{
+	return(c >= '0' && c <= '9');
+}
+
 
 /*
  * Convert a string to a long integer.
@@ -84,43 +87,52 @@ esp_isdigit(char c)
  * alphabets and digits are each contiguous.
  */
 long ICACHE_FLASH_ATTR
-esp_strtol(nptr, endptr, base)
-	const char *nptr;
-	char **endptr;
-	int base;
+esp_strtol( nptr, endptr, base )
+const char *nptr;
+
+
+char	**endptr;
+int	base;
 {
-	const char *s = nptr;
-	unsigned long acc;
-	int c;
-	unsigned long cutoff;
-	int neg = 0, any, cutlim;
+	const char	*s = nptr;
+	unsigned long	acc;
+	int		c;
+	unsigned long	cutoff;
+	int		neg = 0, any, cutlim;
+
 
 	/*
 	 * Skip white space and pick up leading +/- sign if any.
 	 * If base is 0, allow 0x for hex and 0 for octal, else
 	 * assume decimal; if base is already 16, allow 0x.
 	 */
-	do {
+	do
+	{
 		c = *s++;
-	} while (esp_isspace(c));
-	if (c == '-') {
-		neg = 1;
-		c = *s++;
-	} else if (c == '+')
-		c = *s++;
-	if ((base == 0 || base == 16) &&
-	    c == '0' && (*s == 'x' || *s == 'X')) {
-		c = s[1];
-		s += 2;
-		base = 16;
-	} else if ((base == 0 || base == 2) &&
-	    c == '0' && (*s == 'b' || *s == 'B')) {
-		c = s[1];
-		s += 2;
-		base = 2;
 	}
-	if (base == 0)
+	while ( esp_isspace( c ) );
+	if ( c == '-' )
+	{
+		neg	= 1;
+		c	= *s++;
+	} else if ( c == '+' )
+		c = *s++;
+	if ( (base == 0 || base == 16) &&
+	     c == '0' && (*s == 'x' || *s == 'X') )
+	{
+		c	= s[1];
+		s	+= 2;
+		base	= 16;
+	} else if ( (base == 0 || base == 2) &&
+		    c == '0' && (*s == 'b' || *s == 'B') )
+	{
+		c	= s[1];
+		s	+= 2;
+		base	= 2;
+	}
+	if ( base == 0 )
 		base = c == '0' ? 8 : 10;
+
 
 	/*
 	 * Compute the cutoff value between legal numbers and illegal
@@ -139,368 +151,471 @@ esp_strtol(nptr, endptr, base)
 	 * Set any if any `digits' consumed; make it negative to indicate
 	 * overflow.
 	 */
-	cutoff = neg ? -(unsigned long)LONG_MIN : LONG_MAX;
-	cutlim = cutoff % (unsigned long)base;
-	cutoff /= (unsigned long)base;
-	for (acc = 0, any = 0;; c = *s++) {
-		if (esp_isdigit(c))
+	cutoff	= neg ? -(unsigned long) LONG_MIN : LONG_MAX;
+	cutlim	= cutoff % (unsigned long) base;
+	cutoff	/= (unsigned long) base;
+	for ( acc = 0, any = 0;; c = *s++ )
+	{
+		if ( esp_isdigit( c ) )
 			c -= '0';
-		else if (esp_isalpha(c))
-			c -= esp_isupper(c) ? 'A' - 10 : 'a' - 10;
+		else if ( esp_isalpha( c ) )
+			c -= esp_isupper( c ) ? 'A' - 10 : 'a' - 10;
 		else
 			break;
-		if (c >= base)
+		if ( c >= base )
 			break;
-		if (any < 0 || acc > cutoff || acc == cutoff && c > cutlim)
+		if ( any < 0 || acc > cutoff || acc == cutoff && c > cutlim )
 			any = -1;
-		else {
-			any = 1;
-			acc *= base;
-			acc += c;
+		else 
+		{
+			any	= 1;
+			acc	*= base;
+			acc	+= c;
 		}
 	}
-	if (any < 0) {
+	if ( any < 0 )
+	{
 		acc = neg ? LONG_MIN : LONG_MAX;
-//		errno = ERANGE;
-	} else if (neg)
+/*		errno = ERANGE; */
+	} else if ( neg )
 		acc = -acc;
-	if (endptr != 0)
-		*endptr = (char *)(any ? s - 1 : nptr);
-	return (acc);
+	if ( endptr != 0 )
+		*endptr = (char *) (any ? s - 1 : nptr);
+	return(acc);
 }
 
-static int ICACHE_FLASH_ATTR chunked_decode(const char * chunked, char * decode)
+static int ICACHE_FLASH_ATTR http_chunked_decode( const char * chunked, char * decode )
 {
-	int i = 0, j = 0;
-	int decode_size = 0;
-	char *str = (char *)chunked;
+	int	i		= 0, j = 0;
+	int	decode_size	= 0;
+	char	*str		= (char *) chunked;
 	do
 	{
 		char * endstr = NULL;
-		//[chunk-size]
-		i = esp_strtol(str + j, endstr, 16);
-		PRINTF("Chunk Size:%d\r\n", i);
-		if (i <= 0) 
+		/* [chunk-size] */
+		i = esp_strtol( str + j, endstr, 16 );
+		HTTPCLIENT_DEBUG( "Chunk Size:%d\r\n", i );
+		if ( i <= 0 )
 			break;
-		//[chunk-size-end-ptr]
-		endstr = (char *)os_strstr(str + j, "\r\n");
-		//[chunk-ext]
+		/* [chunk-size-end-ptr] */
+		endstr = (char *) os_strstr( str + j, "\r\n" );
+		/* [chunk-ext] */
 		j += endstr - (str + j);
-		//[CRLF]
+		/* [CRLF] */
 		j += 2;
-		//[chunk-data]
+		/* [chunk-data] */
 		decode_size += i;
-		os_memcpy((char *)&decode[decode_size - i], (char *)str + j, i);
+		os_memcpy( (char *) &decode[decode_size - i], (char *) str + j, i );
 		j += i;
-		//[CRLF]
+		/* [CRLF] */
 		j += 2;
-	} while(true);
+	}
+	while ( true );
 
-	//
-	//footer CRLF
-	//
+	/*
+	 *
+	 * footer CRLF
+	 *
+	 */
 
-	return j;
+	return(j);
 }
 
-static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned short len)
-{
-	struct espconn * conn = (struct espconn *)arg;
-	request_args * req = (request_args *)conn->reverse;
 
-	if (req->buffer == NULL) {
+static void ICACHE_FLASH_ATTR http_receive_callback( void * arg, char * buf, unsigned short len )
+{
+	struct espconn	* conn	= (struct espconn *) arg;
+	request_args_t	* req	= (request_args_t *) conn->reverse;
+
+	if ( req->buffer == NULL )
+	{
 		return;
 	}
 
-	// Let's do the equivalent of a realloc().
-	const int new_size = req->buffer_size + len;
-	char * new_buffer;
-	if (new_size > BUFFER_SIZE_MAX || NULL == (new_buffer = (char *)os_malloc(new_size))) {
-		os_printf("Response too long (%d)\n", new_size);
-		req->buffer[0] = '\0'; // Discard the buffer to avoid using an incomplete response.
-		if (req->secure)
-			espconn_secure_disconnect(conn);
+	/* Let's do the equivalent of a realloc(). */
+	const int	new_size = req->buffer_size + len;
+	char		* new_buffer;
+	if ( new_size > BUFFER_SIZE_MAX || NULL == (new_buffer = (char *) os_malloc( new_size ) ) )
+	{
+		HTTPCLIENT_DEBUG( "Response too long (%d)\n", new_size );
+		req->buffer[0] = '\0';                                                                  /* Discard the buffer to avoid using an incomplete response. */
+		if ( req->secure )
+			espconn_secure_disconnect( conn );
 		else
-			espconn_disconnect(conn);
-		return; // The disconnect callback will be called.
+			espconn_disconnect( conn );
+		return;                                                                                 /* The disconnect callback will be called. */
 	}
 
-	os_memcpy(new_buffer, req->buffer, req->buffer_size);
-	os_memcpy(new_buffer + req->buffer_size - 1 /*overwrite the null character*/, buf, len); // Append new data.
-	new_buffer[new_size - 1] = '\0'; // Make sure there is an end of string.
+	os_memcpy( new_buffer, req->buffer, req->buffer_size );
+	os_memcpy( new_buffer + req->buffer_size - 1 /*overwrite the null character*/, buf, len );      /* Append new data. */
+	new_buffer[new_size - 1] = '\0';                                                                /* Make sure there is an end of string. */
 
-	os_free(req->buffer);
-	req->buffer = new_buffer;
-	req->buffer_size = new_size;
+	os_free( req->buffer );
+	req->buffer		= new_buffer;
+	req->buffer_size	= new_size;
 }
 
-static void ICACHE_FLASH_ATTR sent_callback(void * arg)
-{
-	struct espconn * conn = (struct espconn *)arg;
-	request_args * req = (request_args *)conn->reverse;
 
-	if (req->post_data == NULL) {
-		PRINTF("All sent\n");
+static void ICACHE_FLASH_ATTR http_send_callback( void * arg )
+{
+	struct espconn	* conn	= (struct espconn *) arg;
+	request_args_t	* req	= (request_args_t *) conn->reverse;
+
+	if ( req->post_data == NULL )
+	{
+		HTTPCLIENT_DEBUG( "All sent\n" );
 	}
-	else {
-		// The headers were sent, now send the contents.
-		PRINTF("Sending request body\n");
-		if (req->secure)
-			espconn_secure_sent(conn, (uint8_t *)req->post_data, strlen(req->post_data));
+	else  
+	{
+		/* The headers were sent, now send the contents. */
+		HTTPCLIENT_DEBUG( "Sending request body\n" );
+		if ( req->secure )
+			espconn_secure_send( conn, (uint8_t *) req->post_data, strlen( req->post_data ) );
 		else
-			espconn_sent(conn, (uint8_t *)req->post_data, strlen(req->post_data));
-		os_free(req->post_data);
+			espconn_send( conn, (uint8_t *) req->post_data, strlen( req->post_data ) );
+		os_free( req->post_data );
 		req->post_data = NULL;
 	}
 }
 
-static void ICACHE_FLASH_ATTR connect_callback(void * arg)
+
+static void ICACHE_FLASH_ATTR http_connect_callback( void * arg )
 {
-	PRINTF("Connected\n");
-	struct espconn * conn = (struct espconn *)arg;
-	request_args * req = (request_args *)conn->reverse;
+	HTTPCLIENT_DEBUG( "Connected\n" );
+	struct espconn	* conn	= (struct espconn *) arg;
+	request_args_t	* req	= (request_args_t *) conn->reverse;
 
-	espconn_regist_recvcb(conn, receive_callback);
-	espconn_regist_sentcb(conn, sent_callback);
+	espconn_regist_recvcb( conn, http_receive_callback );
+	espconn_regist_sentcb( conn, http_send_callback );
 
-	const char * method = "GET";
 	char post_headers[32] = "";
 
-	if (req->post_data != NULL) { // If there is data this is a POST request.
-		method = "POST";
-		os_sprintf(post_headers, "Content-Length: %d\r\n", strlen(req->post_data));
+	if ( req->post_data != NULL ) /* If there is data then add Content-Length header. */
+	{
+		os_sprintf( post_headers, "Content-Length: %d\r\n", strlen( req->post_data ) );
 	}
 
-	char buf[69 + strlen(method) + strlen(req->path) + strlen(req->hostname) +
-			 strlen(req->headers) + strlen(post_headers)];
-	int len = os_sprintf(buf,
-						 "%s %s HTTP/1.1\r\n"
-						 "Host: %s:%d\r\n"
-						 "Connection: close\r\n"
-						 "User-Agent: ESP8266\r\n"
-						 "%s"
-						 "%s"
-						 "\r\n",
-						 method, req->path, req->hostname, req->port, req->headers, post_headers);
+	char buf[69 + strlen( req->method ) + strlen( req->path ) + strlen( req->hostname ) +
+		 strlen( req->headers ) + strlen( post_headers )];
+	int len = os_sprintf( buf,
+			      "%s %s HTTP/1.1\r\n"
+			      "Host: %s:%d\r\n"
+			      "Connection: close\r\n"
+			      "User-Agent: ESP8266\r\n"
+			      "%s"
+			      "%s"
+			      "\r\n",
+			      req->method, req->path, req->hostname, req->port, req->headers, post_headers );
 
-	if (req->secure)
-		espconn_secure_sent(conn, (uint8_t *)buf, len);
+	if ( req->secure )
+		espconn_secure_send( conn, (uint8_t *) buf, len );
 	else
-		espconn_sent(conn, (uint8_t *)buf, len);
-	os_free(req->headers);
+		espconn_send( conn, (uint8_t *) buf, len );
+	os_free( req->headers );
 	req->headers = NULL;
-	PRINTF("Sending request header\n");
+	HTTPCLIENT_DEBUG( "Sending request header\n" );
 }
 
-static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
-{
-	PRINTF("Disconnected\n");
-	struct espconn *conn = (struct espconn *)arg;
 
-	if(conn == NULL) {
+static void ICACHE_FLASH_ATTR http_disconnect_callback( void * arg )
+{
+	HTTPCLIENT_DEBUG( "Disconnected\n" );
+	struct espconn *conn = (struct espconn *) arg;
+
+	if ( conn == NULL )
+	{
 		return;
 	}
 
-	if(conn->reverse != NULL) {
-		request_args * req = (request_args *)conn->reverse;
-		int http_status = -1;
-		char * body = "";
-		if (req->buffer == NULL) {
-			os_printf("Buffer shouldn't be NULL\n");
-		}
-		else if (req->buffer[0] != '\0') {
-			// FIXME: make sure this is not a partial response, using the Content-Length header.
+	if ( conn->proto.tcp != NULL )
+	{
+		os_free( conn->proto.tcp );
+	}
+	if ( conn->reverse != NULL )
+	{
+		request_args_t	* req		= (request_args_t *) conn->reverse;
+		int		http_status	= -1;
+		char		* body		= "";
 
+		// Turn off timeout timer
+		os_timer_disarm( &(req->timeout_timer) );
+
+		if ( req->buffer == NULL )
+		{
+			HTTPCLIENT_DEBUG( "Buffer shouldn't be NULL\n" );
+		}
+		else if ( req->buffer[0] != '\0' )
+		{
+			/* FIXME: make sure this is not a partial response, using the Content-Length header. */
 			const char * version = "HTTP/1.1 ";
-			if (os_strncmp(req->buffer, version, strlen(version)) != 0) {
-				os_printf("Invalid version in %s\n", req->buffer);
+			if ( os_strncmp( req->buffer, version, strlen( version ) ) != 0 )
+			{
+				HTTPCLIENT_DEBUG( "Invalid version in %s\n", req->buffer );
 			}
-			else {
-				http_status = atoi(req->buffer + strlen(version));
-				body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 4;
-				if(os_strstr(req->buffer, "Transfer-Encoding: chunked"))
+			else  
+			{
+				http_status	= atoi( req->buffer + strlen( version ) );
+				body		= (char *) os_strstr( req->buffer, "\r\n\r\n" ) + 4;
+				if ( os_strstr( req->buffer, "Transfer-Encoding: chunked" ) )
 				{
-					int body_size = req->buffer_size - (body - req->buffer);
-					char chunked_decode_buffer[body_size];
-					os_memset(chunked_decode_buffer, 0, body_size);
-					// Chunked data
-					chunked_decode(body, chunked_decode_buffer);
-					os_memcpy(body, chunked_decode_buffer, body_size);
+					int	body_size = req->buffer_size - (body - req->buffer);
+					char	chunked_decode_buffer[body_size];
+					os_memset( chunked_decode_buffer, 0, body_size );
+					/* Chuncked data */
+					http_chunked_decode( body, chunked_decode_buffer );
+					os_memcpy( body, chunked_decode_buffer, body_size );
 				}
 			}
 		}
-
-		if (req->user_callback != NULL) { // Callback is optional.
-			req->user_callback(body, http_status, req->buffer);
+		if ( req->callback_handle != NULL ) /* Callback is optional. */
+		{
+			req->callback_handle( body, http_status, req->buffer );
 		}
-
-		os_free(req->buffer);
-		os_free(req->hostname);
-		os_free(req->path);
-		os_free(req);
+		os_free( req->buffer );
+		os_free( req->hostname );
+		os_free( req->method );
+		os_free( req->path );
+		os_free( req );
 	}
-	espconn_delete(conn);
-	if(conn->proto.tcp != NULL) {
-		os_free(conn->proto.tcp);
-	}
-	os_free(conn);
+	/* Fix memory leak. */
+	espconn_delete( conn );
+	os_free( conn );
 }
 
-static void ICACHE_FLASH_ATTR error_callback(void *arg, sint8 errType)
+
+static void ICACHE_FLASH_ATTR http_error_callback( void *arg, sint8 errType )
 {
-	PRINTF("Disconnected with error\n");
-	disconnect_callback(arg);
+	HTTPCLIENT_DEBUG( "Disconnected with error\n" );
+	http_disconnect_callback( arg );
 }
 
-static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * addr, void * arg)
+
+static void ICACHE_FLASH_ATTR http_timeout_callback( void *arg )
 {
-	request_args * req = (request_args *)arg;
-
-	if (addr == NULL) {
-		os_printf("DNS failed for %s\n", hostname);
-		if (req->user_callback != NULL) {
-			req->user_callback("", -1, "");
-		}
-		os_free(req);
+	HTTPCLIENT_DEBUG( "Connection timeout\n" );
+	struct espconn * conn = (struct espconn *) arg;
+	if ( conn == NULL )
+	{
+		return;
 	}
-	else {
-		PRINTF("DNS found %s " IPSTR "\n", hostname, IP2STR(addr));
-
-		struct espconn * conn = (struct espconn *)os_malloc(sizeof(struct espconn));
-		conn->type = ESPCONN_TCP;
-		conn->state = ESPCONN_NONE;
-		conn->proto.tcp = (esp_tcp *)os_malloc(sizeof(esp_tcp));
-		conn->proto.tcp->local_port = espconn_port();
-		conn->proto.tcp->remote_port = req->port;
-		conn->reverse = req;
-
-		os_memcpy(conn->proto.tcp->remote_ip, addr, 4);
-
-		espconn_regist_connectcb(conn, connect_callback);
-		espconn_regist_disconcb(conn, disconnect_callback);
-		espconn_regist_reconcb(conn, error_callback);
-
-		if (req->secure) {
-			espconn_secure_set_size(ESPCONN_CLIENT,5120); // set SSL buffer size
-			espconn_secure_connect(conn);
-		} else {
-			espconn_connect(conn);
-		}
+	if ( conn->reverse == NULL )
+	{
+		return;
 	}
+	request_args_t * req = (request_args_t *) conn->reverse;
+	/* Call disconnect */
+	if ( req->secure )
+		espconn_secure_disconnect( conn );
+	else
+		espconn_disconnect( conn );
 }
 
-void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback)
+
+static void ICACHE_FLASH_ATTR http_dns_callback( const char * hostname, ip_addr_t * addr, void * arg )
 {
-	PRINTF("DNS request\n");
+	request_args_t * req = (request_args_t *) arg;
 
-	request_args * req = (request_args *)os_malloc(sizeof(request_args));
-	req->hostname = esp_strdup(hostname);
-	req->path = esp_strdup(path);
-	req->port = port;
-	req->secure = secure;
-	req->headers = esp_strdup(headers);
-	req->post_data = esp_strdup(post_data);
-	req->buffer_size = 1;
-	req->buffer = (char *)os_malloc(1);
-	req->buffer[0] = '\0'; // Empty string.
-	req->user_callback = user_callback;
-
-	ip_addr_t addr;
-	err_t error = espconn_gethostbyname((struct espconn *)req, // It seems we don't need a real espconn pointer here.
-										hostname, &addr, dns_callback);
-
-	if (error == ESPCONN_INPROGRESS) {
-		PRINTF("DNS pending\n");
-	}
-	else if (error == ESPCONN_OK) {
-		// Already in the local names table (or hostname was an IP address), execute the callback ourselves.
-		dns_callback(hostname, &addr, req);
-	}
-	else {
-		if (error == ESPCONN_ARG) {
-			os_printf("DNS arg error %s\n", hostname);
+	if ( addr == NULL )
+	{
+		HTTPCLIENT_DEBUG( "DNS failed for %s\n", hostname );
+		if ( req->callback_handle != NULL )
+		{
+			req->callback_handle( "", -1, "" );
 		}
-		else {
-			os_printf("DNS error code %d\n", error);
+		os_free( req );
+	}
+	else  
+	{
+		HTTPCLIENT_DEBUG( "DNS found %s " IPSTR "\n", hostname, IP2STR( addr ) );
+
+		struct espconn * conn = (struct espconn *) os_malloc( sizeof(struct espconn) );
+		conn->type			= ESPCONN_TCP;
+		conn->state			= ESPCONN_NONE;
+		conn->proto.tcp			= (esp_tcp *) os_malloc( sizeof(esp_tcp) );
+		conn->proto.tcp->local_port	= espconn_port();
+		conn->proto.tcp->remote_port	= req->port;
+		conn->reverse			= req;
+
+		os_memcpy( conn->proto.tcp->remote_ip, addr, 4 );
+
+		espconn_regist_connectcb( conn, http_connect_callback );
+		espconn_regist_disconcb( conn, http_disconnect_callback );
+		espconn_regist_reconcb( conn, http_error_callback );
+
+		/* Set connection timeout timer */
+		os_timer_disarm( &(req->timeout_timer) );
+		os_timer_setfn( &(req->timeout_timer), (os_timer_func_t *) http_timeout_callback, conn );
+		os_timer_arm( &(req->timeout_timer), req->timeout, false );
+
+		if ( req->secure )
+		{
+			espconn_secure_set_size( ESPCONN_CLIENT, 5120 ); /* set SSL buffer size */
+			espconn_secure_connect( conn );
+		} 
+		else 
+		{
+			espconn_connect( conn );
 		}
-		dns_callback(hostname, NULL, req); // Handle all DNS errors the same way.
 	}
 }
+
+
+void ICACHE_FLASH_ATTR http_raw_request( const char * hostname, int port, bool secure, const char * method, const char * path, const char * headers, const char * post_data, http_callback_t callback_handle )
+{
+	HTTPCLIENT_DEBUG( "DNS request\n" );
+
+	request_args_t * req = (request_args_t *) os_malloc( sizeof(request_args_t) );
+	req->hostname		= esp_strdup( hostname );
+	req->port		= port;
+	req->secure		= secure;
+	req->method		= esp_strdup( method );
+	req->path		= esp_strdup( path );
+	req->headers		= esp_strdup( headers );
+	req->post_data		= esp_strdup( post_data );
+	req->buffer_size	= 1;
+	req->buffer		= (char *) os_malloc( 1 );
+	req->buffer[0]		= '\0';                                         /* Empty string. */
+	req->callback_handle	= callback_handle;
+	req->timeout		= HTTP_REQUEST_TIMEOUT_MS;
+
+	ip_addr_t	addr;
+	err_t		error = espconn_gethostbyname( (struct espconn *) req,  /* It seems we don't need a real espconn pointer here. */
+						       hostname, &addr, http_dns_callback );
+
+	if ( error == ESPCONN_INPROGRESS )
+	{
+		HTTPCLIENT_DEBUG( "DNS pending\n" );
+	}
+	else if ( error == ESPCONN_OK )
+	{
+		/* Already in the local names table (or hostname was an IP address), execute the callback ourselves. */
+		http_dns_callback( hostname, &addr, req );
+	}
+	else  
+	{
+		if ( error == ESPCONN_ARG )
+		{
+			HTTPCLIENT_DEBUG( "DNS arg error %s\n", hostname );
+		}else  {
+			HTTPCLIENT_DEBUG( "DNS error code %d\n", error );
+		}
+		http_dns_callback( hostname, NULL, req ); /* Handle all DNS errors the same way. */
+	}
+}
+
 
 /*
  * Parse an URL of the form http://host:port/path
  * <host> can be a hostname or an IP address
  * <port> is optional
  */
-void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback)
+void ICACHE_FLASH_ATTR http_request( const char * url, const char * method, const char * headers, const char * post_data, http_callback_t callback_handle )
 {
-	// FIXME: handle HTTP auth with http://user:pass@host/
-	// FIXME: get rid of the #anchor part if present.
+	/*
+	 * FIXME: handle HTTP auth with http://user:pass@host/
+	 * FIXME: get rid of the #anchor part if present.
+	 */
 
-	char hostname[128] = "";
-	int port = 80;
-	bool secure = false;
+	char	hostname[128]	= "";
+	int	port		= 80;
+	bool	secure		= false;
 
-	bool is_http  = os_strncmp(url, "http://",  strlen("http://"))  == 0;
-	bool is_https = os_strncmp(url, "https://", strlen("https://")) == 0;
+	bool	is_http		= os_strncmp( url, "http://", strlen( "http://" ) ) == 0;
+	bool	is_https	= os_strncmp( url, "https://", strlen( "https://" ) ) == 0;
 
-	if (is_http)
-		url += strlen("http://"); // Get rid of the protocol.
-	else if (is_https) {
-		port = 443;
-		secure = true;
-		url += strlen("https://"); // Get rid of the protocol.
-	} else {
-		os_printf("URL is not HTTP or HTTPS %s\n", url);
+	if ( is_http )
+		url += strlen( "http://" );             /* Get rid of the protocol. */
+	else if ( is_https )
+	{
+		port	= 443;
+		secure	= true;
+		url	+= strlen( "https://" );        /* Get rid of the protocol. */
+	} 
+	else 
+	{
+		HTTPCLIENT_DEBUG( "URL is not HTTP or HTTPS %s\n", url );
 		return;
 	}
 
-	char * path = os_strchr(url, '/');
-	if (path == NULL) {
-		path = os_strchr(url, '\0'); // Pointer to end of string.
+	char * path = os_strchr( url, '/' );
+	if ( path == NULL )
+	{
+		path = os_strchr( url, '\0' );  /* Pointer to end of string. */
 	}
 
-	char * colon = os_strchr(url, ':');
-	if (colon > path) {
-		colon = NULL; // Limit the search to characters before the path.
+	char * colon = os_strchr( url, ':' );
+	if ( colon > path )
+	{
+		colon = NULL;                   /* Limit the search to characters before the path. */
 	}
 
-	if (colon == NULL) { // The port is not present.
-		os_memcpy(hostname, url, path - url);
+	if ( colon == NULL )                    /* The port is not present. */
+	{
+		os_memcpy( hostname, url, path - url );
 		hostname[path - url] = '\0';
 	}
-	else {
-		port = atoi(colon + 1);
-		if (port == 0) {
-			os_printf("Port error %s\n", url);
+	else  
+	{
+		port = atoi( colon + 1 );
+		if ( port == 0 )
+		{
+			HTTPCLIENT_DEBUG( "Port error %s\n", url );
 			return;
 		}
 
-		os_memcpy(hostname, url, colon - url);
+		os_memcpy( hostname, url, colon - url );
 		hostname[colon - url] = '\0';
 	}
 
 
-	if (path[0] == '\0') { // Empty path is not allowed.
+	if ( path[0] == '\0' ) /* Empty path is not allowed. */
+	{
 		path = "/";
 	}
 
-	PRINTF("hostname=%s\n", hostname);
-	PRINTF("port=%d\n", port);
-	PRINTF("path=%s\n", path);
-	http_raw_request(hostname, port, secure, path, post_data, headers, user_callback);
+	HTTPCLIENT_DEBUG( "hostname=%s\n", hostname );
+	HTTPCLIENT_DEBUG( "port=%d\n", port );
+	HTTPCLIENT_DEBUG( "method=%s\n", method );
+	HTTPCLIENT_DEBUG( "path=%s\n", path );
+	http_raw_request( hostname, port, secure, method, path, headers, post_data, callback_handle );
 }
 
-void ICACHE_FLASH_ATTR http_get(const char * url, const char * headers, http_callback user_callback)
+
+/*
+ * Parse an URL of the form http://host:port/path
+ * <host> can be a hostname or an IP address
+ * <port> is optional
+ */
+void ICACHE_FLASH_ATTR http_post( const char * url, const char * headers, const char * post_data, http_callback_t callback_handle )
 {
-	http_post(url, NULL, headers, user_callback);
+	http_request( url, "POST", headers, post_data, callback_handle );
 }
 
-void ICACHE_FLASH_ATTR http_callback_example(char * response, int http_status, char * full_response)
+
+void ICACHE_FLASH_ATTR http_get( const char * url, const char * headers, http_callback_t callback_handle )
 {
-	os_printf("http_status=%d\n", http_status);
-	if (http_status != HTTP_STATUS_GENERIC_ERROR) {
-		os_printf("strlen(full_response)=%d\n", strlen(full_response));
-		os_printf("response=%s<EOF>\n", response);
+	http_request( url, "GET", headers, NULL, callback_handle );
+}
+
+
+void ICACHE_FLASH_ATTR http_delete( const char * url, const char * headers, const char * post_data, http_callback_t callback_handle )
+{
+	http_request( url, "DELETE", headers, post_data, callback_handle );
+}
+
+
+void ICACHE_FLASH_ATTR http_put( const char * url, const char * headers, const char * post_data, http_callback_t callback_handle )
+{
+	http_request( url, "PUT", headers, post_data, callback_handle );
+}
+
+
+void ICACHE_FLASH_ATTR http_callback_example( char * response, int http_status, char * full_response )
+{
+	os_printf( "http_status=%d\n", http_status );
+	if ( http_status != HTTP_STATUS_GENERIC_ERROR )
+	{
+		os_printf( "strlen(full_response)=%d\n", strlen( full_response ) );
+		os_printf( "response=%s<EOF>\n", response );
 	}
 }
