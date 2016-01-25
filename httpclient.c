@@ -317,7 +317,10 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 			}
 			else {
 				http_status = atoi(req->buffer + strlen(version));
-				body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 4;
+				/* find body and zero terminate headers */
+				body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 2;
+				*body++ = '\0';
+				*body++ = '\0';
 				if(os_strstr(req->buffer, "Transfer-Encoding: chunked"))
 				{
 					int body_size = req->buffer_size - (body - req->buffer);
@@ -496,11 +499,11 @@ void ICACHE_FLASH_ATTR http_get(const char * url, const char * headers, http_cal
 	http_post(url, NULL, headers, user_callback);
 }
 
-void ICACHE_FLASH_ATTR http_callback_example(char * response, int http_status, char * full_response)
+void ICACHE_FLASH_ATTR http_callback_example(char * response, int http_status, char * response_headers)
 {
 	os_printf("http_status=%d\n", http_status);
 	if (http_status != HTTP_STATUS_GENERIC_ERROR) {
-		os_printf("strlen(full_response)=%d\n", strlen(full_response));
+		os_printf("strlen(headers)=%d\n", strlen(response_headers));
 		os_printf("response=%s<EOF>\n", response);
 	}
 }
