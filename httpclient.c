@@ -169,38 +169,34 @@ esp_strtol(nptr, endptr, base)
 	return (acc);
 }
 
-static int ICACHE_FLASH_ATTR chunked_decode(const char * chunked, char * decode)
+static int ICACHE_FLASH_ATTR chunked_decode(char * chunked, int size)
 {
-	int i = 0, j = 0;
-	int decode_size = 0;
-	char *str = (char *)chunked;
+	char *src = chunked;
+	char *end = chunked + size;
+	int i, dst = 0;
+
 	do
 	{
 		char * endstr = NULL;
 		//[chunk-size]
-		i = esp_strtol(str + j, endstr, 16);
+		i = esp_strtol(src, endstr, 16);
 		PRINTF("Chunk Size:%d\r\n", i);
 		if (i <= 0) 
 			break;
 		//[chunk-size-end-ptr]
-		endstr = (char *)os_strstr(str + j, "\r\n");
-		//[chunk-ext]
-		j += endstr - (str + j);
-		//[CRLF]
-		j += 2;
+		src = (char *)os_strstr(src, "\r\n") + 2;
 		//[chunk-data]
-		decode_size += i;
-		os_memcpy((char *)&decode[decode_size - i], (char *)str + j, i);
-		j += i;
-		//[CRLF]
-		j += 2;
-	} while(true);
+		os_memmove(&chunked[dst], src, i);
+		src += i + 2; /* CRLF */
+		dst += i;
+	} while (src < end);
 
 	//
 	//footer CRLF
 	//
 
-	return j;
+	/* decoded size */
+	return dst;
 }
 
 static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned short len)
@@ -324,11 +320,7 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 				if(os_strstr(req->buffer, "Transfer-Encoding: chunked"))
 				{
 					int body_size = req->buffer_size - (body - req->buffer);
-					char chunked_decode_buffer[body_size];
-					os_memset(chunked_decode_buffer, 0, body_size);
-					// Chunked data
-					chunked_decode(body, chunked_decode_buffer);
-					os_memcpy(body, chunked_decode_buffer, body_size);
+					chunked_decode(body, body_size);
 				}
 			}
 		}
