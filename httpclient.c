@@ -300,6 +300,7 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 	if(conn->reverse != NULL) {
 		request_args * req = (request_args *)conn->reverse;
 		int http_status = -1;
+		int body_size = 0;
 		char * body = "";
 		if (req->buffer == NULL) {
 			os_printf("Buffer shouldn't be NULL\n");
@@ -317,16 +318,18 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 				body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 2;
 				*body++ = '\0';
 				*body++ = '\0';
+
+				body_size = req->buffer_size - (body - req->buffer);
+
 				if(os_strstr(req->buffer, "Transfer-Encoding: chunked"))
 				{
-					int body_size = req->buffer_size - (body - req->buffer);
-					chunked_decode(body, body_size);
+					body_size = chunked_decode(body, body_size);
 				}
 			}
 		}
 
 		if (req->user_callback != NULL) { // Callback is optional.
-			req->user_callback(body, http_status, req->buffer);
+			req->user_callback(body, http_status, req->buffer, body_size);
 		}
 
 		os_free(req->buffer);
@@ -354,7 +357,7 @@ static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * ad
 	if (addr == NULL) {
 		os_printf("DNS failed for %s\n", hostname);
 		if (req->user_callback != NULL) {
-			req->user_callback("", -1, "");
+			req->user_callback("", -1, "", 0);
 		}
 		os_free(req);
 	}
@@ -491,7 +494,7 @@ void ICACHE_FLASH_ATTR http_get(const char * url, const char * headers, http_cal
 	http_post(url, NULL, headers, user_callback);
 }
 
-void ICACHE_FLASH_ATTR http_callback_example(char * response, int http_status, char * response_headers)
+void ICACHE_FLASH_ATTR http_callback_example(char * response, int http_status, char * response_headers, int size)
 {
 	os_printf("http_status=%d\n", http_status);
 	if (http_status != HTTP_STATUS_GENERIC_ERROR) {
