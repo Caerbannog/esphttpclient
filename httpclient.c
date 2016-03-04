@@ -343,11 +343,13 @@ static void ICACHE_FLASH_ATTR http_disconnect_callback(void * arg)
 		int             http_status     = -1;
 		char            * body          = "";
 
-		// Turn off timeout timer
+		/* Turn off timeout timer */
 		os_timer_disarm(&(req->timeout_timer));
 
 		if (req->buffer == NULL) {
 			HTTPCLIENT_DEBUG("Buffer shouldn't be NULL\n");
+			/* To avoid NULL buffer */
+			req->buffer = "";
 		} else if (req->buffer[0] != '\0') {
 			/* FIXME: make sure this is not a partial response, using the Content-Length header. */
 			const char * version_1_0 = "HTTP/1.0 ";
@@ -358,9 +360,20 @@ static void ICACHE_FLASH_ATTR http_disconnect_callback(void * arg)
 				HTTPCLIENT_DEBUG("Invalid version in %s\n", req->buffer);
 			} else {
 				http_status     = atoi(req->buffer + strlen(version_1_0));
-				body            = (char *) os_strstr(req->buffer, "\r\n\r\n") + 4;
+				body            = (char *) os_strstr(req->buffer, "\r\n\r\n");
+
+				if (NULL == body) {
+					/* Find NULL body */
+					HTTPCLIENT_DEBUG("Body shouldn't be NULL\n");
+					/* To avoid NULL body */
+					body = "";
+				} else {					
+					/* Skip CR & LF */
+					body = body + 4;
+				}
 
 				if (os_strstr(req->buffer, "Transfer-Encoding: chunked")) {
+					HTTPCLIENT_DEBUG("Decoding chunked data\n");
 					int     body_size = req->buffer_size - (body - req->buffer);
 					char    chunked_decode_buffer[body_size];
 					os_memset(chunked_decode_buffer, 0, body_size);
