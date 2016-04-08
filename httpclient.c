@@ -8,7 +8,6 @@
  */
 
 // FIXME: sprintf->snprintf everywhere.
-// FIXME: support null characters in responses.
 
 #include "osapi.h"
 #include "user_interface.h"
@@ -169,38 +168,34 @@ esp_strtol(nptr, endptr, base)
 	return (acc);
 }
 
-static int ICACHE_FLASH_ATTR chunked_decode(const char * chunked, char * decode)
+static int ICACHE_FLASH_ATTR chunked_decode(char * chunked, int size)
 {
-	int i = 0, j = 0;
-	int decode_size = 0;
-	char *str = (char *)chunked;
+	char *src = chunked;
+	char *end = chunked + size;
+	int i, dst = 0;
+
 	do
 	{
 		char * endstr = NULL;
 		//[chunk-size]
-		i = esp_strtol(str + j, endstr, 16);
+		i = esp_strtol(src, endstr, 16);
 		PRINTF("Chunk Size:%d\r\n", i);
 		if (i <= 0) 
 			break;
 		//[chunk-size-end-ptr]
-		endstr = (char *)os_strstr(str + j, "\r\n");
-		//[chunk-ext]
-		j += endstr - (str + j);
-		//[CRLF]
-		j += 2;
+		src = (char *)os_strstr(src, "\r\n") + 2;
 		//[chunk-data]
-		decode_size += i;
-		os_memcpy((char *)&decode[decode_size - i], (char *)str + j, i);
-		j += i;
-		//[CRLF]
-		j += 2;
-	} while(true);
+		os_memmove(&chunked[dst], src, i);
+		src += i + 2; /* CRLF */
+		dst += i;
+	} while (src < end);
 
 	//
 	//footer CRLF
 	//
 
-	return j;
+	/* decoded size */
+	return dst;
 }
 
 static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned short len)
@@ -304,6 +299,7 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 	if(conn->reverse != NULL) {
 		request_args * req = (request_args *)conn->reverse;
 		int http_status = -1;
+		int body_size = 0;
 		char * body = "";
 		if (req->buffer == NULL) {
 			os_printf("Buffer shouldn't be NULL\n");
@@ -319,21 +315,22 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 			}
 			else {
 				http_status = atoi(req->buffer + strlen(version10));
-				body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 4;
+				/* find body and zero terminate headers */
+				body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 2;
+				*body++ = '\0';
+				*body++ = '\0';
+
+				body_size = req->buffer_size - (body - req->buffer);
+
 				if(os_strstr(req->buffer, "Transfer-Encoding: chunked"))
 				{
-					int body_size = req->buffer_size - (body - req->buffer);
-					char chunked_decode_buffer[body_size];
-					os_memset(chunked_decode_buffer, 0, body_size);
-					// Chunked data
-					chunked_decode(body, chunked_decode_buffer);
-					os_memcpy(body, chunked_decode_buffer, body_size);
+					body_size = chunked_decode(body, body_size);
 				}
 			}
 		}
 
 		if (req->user_callback != NULL) { // Callback is optional.
-			req->user_callback(body, http_status, req->buffer);
+			req->user_callback(body, http_status, req->buffer, body_size);
 		}
 
 		os_free(req->buffer);
@@ -361,7 +358,7 @@ static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * ad
 	if (addr == NULL) {
 		os_printf("DNS failed for %s\n", hostname);
 		if (req->user_callback != NULL) {
-			req->user_callback("", -1, "");
+			req->user_callback("", -1, "", 0);
 		}
 		os_free(req);
 	}
@@ -498,11 +495,12 @@ void ICACHE_FLASH_ATTR http_get(const char * url, const char * headers, http_cal
 	http_post(url, NULL, headers, user_callback);
 }
 
-void ICACHE_FLASH_ATTR http_callback_example(char * response, int http_status, char * full_response)
+void ICACHE_FLASH_ATTR http_callback_example(char * response_body, int http_status, char * response_headers, int body_size)
 {
 	os_printf("http_status=%d\n", http_status);
 	if (http_status != HTTP_STATUS_GENERIC_ERROR) {
-		os_printf("strlen(full_response)=%d\n", strlen(full_response));
-		os_printf("response=%s<EOF>\n", response);
+		os_printf("strlen(headers)=%d\n", strlen(response_headers));
+		os_printf("body_size=%d\n", body_size);
+		os_printf("body=%s<EOF>\n", response_body); // FIXME: this does not handle binary data.
 	}
 }

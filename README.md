@@ -51,12 +51,13 @@ Include `httpclient.h` from `user_main.c` then call one of these functions:
 void http_get(const char * url, const char * headers, http_callback user_callback);
 void http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback);
 
-void http_callback_example(char * response, int http_status, char * full_response)
+void http_callback_example(char * response_body, int http_status, char * response_headers, int body_size)
 {
 	os_printf("http_status=%d\n", http_status);
 	if (http_status != HTTP_STATUS_GENERIC_ERROR) {
-		os_printf("strlen(full_response)=%d\n", strlen(full_response));
-		os_printf("response=%s<EOF>\n", response);
+		os_printf("strlen(headers)=%d\n", strlen(response_headers));
+		os_printf("body_size=%d\n", body_size);
+		os_printf("body=%s<EOF>\n", response_body);
 	}
 }
 ```
@@ -71,6 +72,7 @@ The output looks like this:
 ```
 http_status=200
 strlen(full_response)=244
-response=208.97.177.124
+body_size=15
+response_body=208.97.177.124
 <EOF>
 ```
