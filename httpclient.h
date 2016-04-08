@@ -20,7 +20,7 @@
  * A successful request corresponds to an HTTP status code of 200 (OK).
  * More info at http://en.wikipedia.org/wiki/List_of_HTTP_status_codes
  */
-typedef void (* http_callback)(char * response_body, int http_status, char * full_response);
+typedef void (* http_callback)(char * response_body, int http_status, char * response_headers, int body_size);
 
 /*
  * Download a web page from its URL.
@@ -45,6 +45,6 @@ void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool se
 /*
  * Output on the UART.
  */
-void http_callback_example(char * response, int http_status, char * full_response);
+void http_callback_example(char * response, int http_status, char * response_headers, int response_size);
 
 #endif
