@@ -10,6 +10,8 @@
 #ifndef HTTPCLIENT_H
 #define HTTPCLIENT_H
 
+#include <espmissingincludes.h> // This can remove some warnings depending on your project setup. It is safe to remove this line.
+
 #define HTTP_STATUS_GENERIC_ERROR  -1   // In case of TCP or DNS error the callback is called with this status.
 #define BUFFER_SIZE_MAX            5000 // Size of http responses that will cause an error.
 
