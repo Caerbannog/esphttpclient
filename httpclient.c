@@ -82,11 +82,8 @@ esp_isdigit(char c)
  * Ignores `locale' stuff.  Assumes that the upper and lower case
  * alphabets and digits are each contiguous.
  */
-long ICACHE_FLASH_ATTR
-esp_strtol(nptr, endptr, base)
-	const char *nptr;
-	char **endptr;
-	int base;
+static long ICACHE_FLASH_ATTR
+esp_strtol(const char *nptr, char **endptr, int base)
 {
 	const char *s = nptr;
 	unsigned long acc;
