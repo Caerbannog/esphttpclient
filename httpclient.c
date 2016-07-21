@@ -173,9 +173,8 @@ static int ICACHE_FLASH_ATTR chunked_decode(char * chunked, int size)
 
 	do
 	{
-		char * endstr = NULL;
 		//[chunk-size]
-		i = esp_strtol(src, endstr, 16);
+		i = esp_strtol(src, (char **) NULL, 16);
 		PRINTF("Chunk Size:%d\r\n", i);
 		if (i <= 0) 
 			break;
