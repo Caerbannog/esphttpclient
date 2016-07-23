@@ -356,6 +356,11 @@ static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * ad
 		if (req->user_callback != NULL) {
 			req->user_callback("", -1, "", 0);
 		}
+		os_free(req->buffer);
+		os_free(req->post_data);
+		os_free(req->headers);
+		os_free(req->path);
+		os_free(req->hostname);
 		os_free(req);
 	}
 	else {
