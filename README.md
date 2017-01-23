@@ -73,6 +73,6 @@ The output looks like this:
 http_status=200
 strlen(full_response)=244
 body_size=15
-response_body=208.97.177.124
+body=208.97.177.124
 <EOF>
 ```
