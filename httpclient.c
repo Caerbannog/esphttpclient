@@ -722,3 +722,16 @@ void ICACHE_FLASH_ATTR http_callback_example(char * response_body, int http_stat
 	}
 }
 
+void ICACHE_FLASH_ATTR http_callback_example_streaming(char * response_body, int http_status, char * response_headers, int body_size)
+{
+	if (http_status > 0 && response_headers != NULL) {
+		os_printf("Received HTTP response with status %d and headers:\n%s\n",
+			http_status, response_headers);
+	} else if (http_status == HTTP_STATUS_BODY) {
+		os_printf("Received a part of the response body:\n%s\n",
+			response_body);
+	} else if (http_status == HTTP_STATUS_DISCONNECT) {
+		os_printf("The response has ended.\n");
+	}
+}
+
