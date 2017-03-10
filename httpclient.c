@@ -24,6 +24,12 @@
 #define PRINTF(...)
 #endif
 
+typedef enum {
+	PS_PARSING_HEADER,
+	PS_PARSING_BODY,
+	PS_PARSING_CHUNKED_BODY
+} header_parse_state;
+
 // Internal state.
 typedef struct {
 	char * path;
@@ -35,6 +41,10 @@ typedef struct {
 	int buffer_size;
 	bool secure;
 	http_callback user_callback;
+	int current_chunk_size;
+	int buffer_allocated_size;
+	header_parse_state parse_state;
+	bool streaming;
 } request_args;
 
 static char * ICACHE_FLASH_ATTR esp_strdup(const char * str)
@@ -194,8 +204,73 @@ static int ICACHE_FLASH_ATTR chunked_decode(char * chunked, int size)
 	return dst;
 }
 
-static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned short len)
-{
+static void ICACHE_FLASH_ATTR request_disconnect(struct espconn * conn,
+	bool is_secure) {
+	if (is_secure)
+		espconn_secure_disconnect(conn);
+	else
+		espconn_disconnect(conn);
+}
+
+static bool ICACHE_FLASH_ATTR append_to_buffer(request_args * req,
+	char * data, unsigned short len) {
+	const int new_size = req->buffer_size + len;
+
+	// Let's do the equivalent of a realloc().
+	if (new_size > req->buffer_allocated_size) {
+		char * new_buffer;
+		if (new_size > BUFFER_SIZE_MAX ||
+			NULL == (new_buffer = (char *)os_malloc(new_size))) {
+			os_printf("Response too long (%d)\n", new_size);
+			req->buffer[0] = '\0'; // Discard the buffer to avoid using an incomplete response.
+			return false;
+		}
+
+		os_memcpy(new_buffer, req->buffer, req->buffer_size);
+		os_free(req->buffer);
+		req->buffer = new_buffer;
+		req->buffer_allocated_size = new_size;
+	}
+
+	os_memcpy(req->buffer + req->buffer_size - 1 /*overwrite the null character*/, data, len); // Append new data.
+	req->buffer[new_size - 1] = '\0'; // Make sure there is an end of string.
+	req->buffer_size = new_size;
+
+	return true;
+}
+
+static bool ICACHE_FLASH_ATTR parse_header(const char * buffer,
+	int * http_status, bool * is_chunked, char ** body_start) {
+	// FIXME: make sure this is not a partial response, using the Content-Length header.
+	const char * version10 = "HTTP/1.0 ";
+	const char * version11 = "HTTP/1.1 ";
+	if (os_strncmp(buffer, version10, strlen(version10)) != 0
+	 && os_strncmp(buffer, version11, strlen(version11)) != 0) {
+		os_printf("Invalid version in %s\n", buffer);
+		return false;
+	}
+
+	if (http_status != NULL) {
+		*http_status = atoi(buffer + strlen(version10));
+	}
+	/* find the start of the body */
+	if (body_start != NULL) {
+		char * header_end = (char *)os_strstr(buffer, "\r\n\r\n");
+		if (header_end != NULL) {
+			*body_start = header_end + 2;
+		} else {
+			*body_start = NULL;
+		}
+	}
+
+	if (is_chunked != NULL) {
+		*is_chunked = os_strstr(buffer, "Transfer-Encoding: chunked") != NULL;
+	}
+	return true;
+}
+
+static void ICACHE_FLASH_ATTR receive_callback_normal(void * arg, char * buf,
+	unsigned short len) {
 	struct espconn * conn = (struct espconn *)arg;
 	request_args * req = (request_args *)conn->reverse;
 
@@ -203,26 +278,114 @@ static void ICACHE_FLASH_ATTR receive_callback(void * arg, char * buf, unsigned 
 		return;
 	}
 
-	// Let's do the equivalent of a realloc().
-	const int new_size = req->buffer_size + len;
-	char * new_buffer;
-	if (new_size > BUFFER_SIZE_MAX || NULL == (new_buffer = (char *)os_malloc(new_size))) {
-		os_printf("Response too long (%d)\n", new_size);
-		req->buffer[0] = '\0'; // Discard the buffer to avoid using an incomplete response.
-		if (req->secure)
-			espconn_secure_disconnect(conn);
-		else
-			espconn_disconnect(conn);
-		return; // The disconnect callback will be called.
+	if (!append_to_buffer(req, buf, len)) {
+		request_disconnect(conn, req->secure);
+	}
+}
+
+static void ICACHE_FLASH_ATTR receive_callback_streaming(void * arg, char * buf,
+	unsigned short len) {
+	struct espconn * conn = (struct espconn *)arg;
+	request_args * req = (request_args *)conn->reverse;
+
+	if (req->buffer == NULL) {
+		return;
 	}
 
-	os_memcpy(new_buffer, req->buffer, req->buffer_size);
-	os_memcpy(new_buffer + req->buffer_size - 1 /*overwrite the null character*/, buf, len); // Append new data.
-	new_buffer[new_size - 1] = '\0'; // Make sure there is an end of string.
+	if (!append_to_buffer(req, buf, len)) {
+		request_disconnect(conn, req->secure);
+	}
 
-	os_free(req->buffer);
-	req->buffer = new_buffer;
-	req->buffer_size = new_size;
+	if (req->parse_state == PS_PARSING_HEADER) {
+		char *header_end = os_strstr(req->buffer, "\r\n\r\n") + 2;
+		if (header_end == NULL) {
+			// Not ready to parse the header yet
+			PRINTF("partial header\n");
+			return;
+		}
+		int http_status = 0;
+		bool is_chunked = false;
+		if (!parse_header(req->buffer, &http_status, &is_chunked, NULL)) {
+			request_disconnect(conn, req->secure);
+		} else {
+			if (is_chunked) {
+				req->parse_state = PS_PARSING_CHUNKED_BODY;
+			} else {
+				req->parse_state = PS_PARSING_BODY;
+			}
+
+			*header_end = '\0';
+			if (req->user_callback != NULL) {
+				req->user_callback(NULL, http_status, req->buffer, 0);
+			}
+			*header_end = '\r';
+
+			/* In the case of a chunked body, leave the last CRLF in.
+			 * This way the parsing loop can just look for the
+			 * \r\nCHUNK SIZE\r\n boundary every time. */
+			char *body_start = req->parse_state == PS_PARSING_CHUNKED_BODY ?
+				header_end : header_end + 2;
+			/* Move the start of the body to the beginning of the buffer */
+			int body_offset = body_start - req->buffer;
+			if (body_offset < req->buffer_size) {
+				req->buffer_size -= body_offset;
+				os_memmove(req->buffer, body_start, req->buffer_size);
+			} else {
+				req->buffer_size = 1;
+				req->buffer[0] = '\0';
+			}
+		}
+	}
+
+	if (req->user_callback == NULL) {
+		return;
+	}
+
+	if (req->parse_state == PS_PARSING_CHUNKED_BODY) {
+		char *read_ptr = req->buffer;
+		char *buffer_end = req->buffer + req->buffer_size - 1;  /* Ignore trailing zero */
+		do {
+			if (req->current_chunk_size == 0) {
+				char *crlf_pos_1 = os_strstr(read_ptr, "\r\n");
+				char *crlf_pos_2 = NULL;
+				if (crlf_pos_1 != NULL &&
+					(crlf_pos_2 = os_strstr(crlf_pos_1 + 2, "\r\n"))) {
+					req->current_chunk_size =
+						esp_strtol(crlf_pos_1 + 2, (char **)NULL, 16);
+					read_ptr = crlf_pos_2 + 2;
+				} else { break; }
+			}
+
+			char *read_end = read_ptr + req->current_chunk_size;
+			if (read_end > buffer_end) {
+				read_end = buffer_end;
+			}
+			size_t read_size = read_end - read_ptr;
+			if (read_size > 0) {
+				/* Null terminate the current block for convenience */
+				char tmp = *read_end;
+				*read_end = '\0';
+				req->user_callback(read_ptr, HTTP_STATUS_BODY, NULL,
+					read_size + 1);
+				*read_end = tmp;
+			}
+			req->current_chunk_size -= read_size;
+			read_ptr += read_size;
+		} while (read_ptr < buffer_end);
+
+		int leftover_size = buffer_end - read_ptr;
+		if (leftover_size < 0) {
+			leftover_size = 0;
+		}
+		/* The trailing zero gets copied here */
+		os_memmove(req->buffer, read_ptr, leftover_size + 1);
+		req->buffer_size = leftover_size + 1;
+	} else if (req->parse_state == PS_PARSING_BODY) {
+		req->user_callback(req->buffer, HTTP_STATUS_BODY, NULL,
+			req->buffer_size);
+		req->buffer[0] = '\0';
+		req->buffer_size = 1;
+	}
 }
 
 static void ICACHE_FLASH_ATTR sent_callback(void * arg)
@@ -251,7 +414,11 @@ static void ICACHE_FLASH_ATTR connect_callback(void * arg)
 	struct espconn * conn = (struct espconn *)arg;
 	request_args * req = (request_args *)conn->reverse;
 
-	espconn_regist_recvcb(conn, receive_callback);
+	if (req->streaming) {
+		espconn_regist_recvcb(conn, receive_callback_streaming);
+	} else {
+		espconn_regist_recvcb(conn, receive_callback_normal);
+	}
 	espconn_regist_sentcb(conn, sent_callback);
 
 	const char * method = "GET";
@@ -283,7 +450,42 @@ static void ICACHE_FLASH_ATTR connect_callback(void * arg)
 	PRINTF("Sending request header\n");
 }
 
-static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
+static void ICACHE_FLASH_ATTR do_cleanup(struct espconn * conn) {
+	if (conn->reverse != NULL) {
+		request_args * req = (request_args *)conn->reverse;
+		os_free(req->buffer);
+		os_free(req->hostname);
+		os_free(req->path);
+		os_free(req);
+	}
+
+	espconn_delete(conn);
+	if(conn->proto.tcp != NULL) {
+		os_free(conn->proto.tcp);
+	}
+	os_free(conn);
+}
+
+static void ICACHE_FLASH_ATTR disconnect_callback_streaming(void * arg)
+{
+	PRINTF("Disconnected\n");
+	struct espconn *conn = (struct espconn *)arg;
+
+	if(conn == NULL) {
+		return;
+	}
+
+	if(conn->reverse != NULL) {
+		request_args * req = (request_args *)conn->reverse;
+		if (req->user_callback != NULL) {
+			req->user_callback(NULL, HTTP_STATUS_DISCONNECT, NULL, 0);
+		}
+	}
+
+	do_cleanup(conn);
+}
+
+static void ICACHE_FLASH_ATTR disconnect_callback_normal(void * arg)
 {
 	PRINTF("Disconnected\n");
 	struct espconn *conn = (struct espconn *)arg;
@@ -297,54 +499,38 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 		int http_status = -1;
 		int body_size = 0;
 		char * body = "";
+		bool is_chunked = false;
 		if (req->buffer == NULL) {
 			os_printf("Buffer shouldn't be NULL\n");
-		}
-		else if (req->buffer[0] != '\0') {
-			// FIXME: make sure this is not a partial response, using the Content-Length header.
-
-			const char * version10 = "HTTP/1.0 ";
-			const char * version11 = "HTTP/1.1 ";
-			if (os_strncmp(req->buffer, version10, strlen(version10)) != 0
-			 && os_strncmp(req->buffer, version11, strlen(version11)) != 0) {
-				os_printf("Invalid version in %s\n", req->buffer);
-			}
-			else {
-				http_status = atoi(req->buffer + strlen(version10));
-				/* find body and zero terminate headers */
-				body = (char *)os_strstr(req->buffer, "\r\n\r\n") + 2;
-				*body++ = '\0';
-				*body++ = '\0';
-
-				body_size = req->buffer_size - (body - req->buffer);
-
-				if(os_strstr(req->buffer, "Transfer-Encoding: chunked"))
-				{
-					body_size = chunked_decode(body, body_size);
-				}
+		} else if (req->buffer[0] != '\0' &&
+			parse_header(req->buffer, &http_status, &is_chunked, &body) &&
+			body != NULL) {
+			*body++ = '\0';
+			*body++ = '\0';
+			body_size = req->buffer_size - (body - req->buffer);
+			if (is_chunked) {
+				body_size = chunked_decode(body, body_size);
 			}
 		}
 
 		if (req->user_callback != NULL) { // Callback is optional.
 			req->user_callback(body, http_status, req->buffer, body_size);
 		}
+	}
 
-		os_free(req->buffer);
-		os_free(req->hostname);
-		os_free(req->path);
-		os_free(req);
-	}
-	espconn_delete(conn);
-	if(conn->proto.tcp != NULL) {
-		os_free(conn->proto.tcp);
-	}
-	os_free(conn);
+	do_cleanup(conn);
 }
 
-static void ICACHE_FLASH_ATTR error_callback(void *arg, sint8 errType)
+static void ICACHE_FLASH_ATTR error_callback_streaming(void *arg, sint8 errType)
 {
 	PRINTF("Disconnected with error\n");
-	disconnect_callback(arg);
+	disconnect_callback_streaming(arg);
+}
+
+static void ICACHE_FLASH_ATTR error_callback_normal(void *arg, sint8 errType)
+{
+	PRINTF("Disconnected with error\n");
+	disconnect_callback_normal(arg);
 }
 
 static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * addr, void * arg)
@@ -377,8 +563,13 @@ static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * ad
 		os_memcpy(conn->proto.tcp->remote_ip, addr, 4);
 
 		espconn_regist_connectcb(conn, connect_callback);
-		espconn_regist_disconcb(conn, disconnect_callback);
-		espconn_regist_reconcb(conn, error_callback);
+		if (req->streaming) {
+			espconn_regist_disconcb(conn, disconnect_callback_streaming);
+			espconn_regist_reconcb(conn, error_callback_streaming);
+		} else {
+			espconn_regist_disconcb(conn, disconnect_callback_normal);
+			espconn_regist_reconcb(conn, error_callback_normal);
+		}
 
 		if (req->secure) {
 			espconn_secure_set_size(ESPCONN_CLIENT,5120); // set SSL buffer size
@@ -389,7 +580,7 @@ static void ICACHE_FLASH_ATTR dns_callback(const char * hostname, ip_addr_t * ad
 	}
 }
 
-void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback)
+static void ICACHE_FLASH_ATTR do_http_raw_request(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback, bool streaming)
 {
 	PRINTF("DNS request\n");
 
@@ -401,9 +592,13 @@ void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool se
 	req->headers = esp_strdup(headers);
 	req->post_data = esp_strdup(post_data);
 	req->buffer_size = 1;
+	req->buffer_allocated_size = 1;
 	req->buffer = (char *)os_malloc(1);
 	req->buffer[0] = '\0'; // Empty string.
 	req->user_callback = user_callback;
+	req->parse_state = PS_PARSING_HEADER;
+	req->current_chunk_size = 0;
+	req->streaming = streaming;
 
 	ip_addr_t addr;
 	err_t error = espconn_gethostbyname((struct espconn *)req, // It seems we don't need a real espconn pointer here.
@@ -427,12 +622,15 @@ void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool se
 	}
 }
 
-/*
- * Parse an URL of the form http://host:port/path
- * <host> can be a hostname or an IP address
- * <port> is optional
- */
-void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback)
+void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback) {
+	do_http_raw_request(hostname, port, secure, path, post_data, headers, user_callback, false);
+}
+
+void ICACHE_FLASH_ATTR http_raw_request_streaming(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback) {
+	do_http_raw_request(hostname, port, secure, path, post_data, headers, user_callback, true);
+}
+
+static void ICACHE_FLASH_ATTR do_http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback, bool streaming)
 {
 	// FIXME: handle HTTP auth with http://user:pass@host/
 	// FIXME: get rid of the #anchor part if present.
@@ -488,12 +686,30 @@ void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, const
 	PRINTF("hostname=%s\n", hostname);
 	PRINTF("port=%d\n", port);
 	PRINTF("path=%s\n", path);
-	http_raw_request(hostname, port, secure, path, post_data, headers, user_callback);
+	do_http_raw_request(hostname, port, secure, path, post_data, headers, user_callback, streaming);
+}
+
+/*
+ * Parse an URL of the form http://host:port/path
+ * <host> can be a hostname or an IP address
+ * <port> is optional
+ */
+void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback) {
+	do_http_post(url, post_data, headers, user_callback, false);
+}
+
+void ICACHE_FLASH_ATTR http_post_streaming(const char * url, const char * post_data, const char * headers, http_callback user_callback) {
+	do_http_post(url, post_data, headers, user_callback, true);
 }
 
 void ICACHE_FLASH_ATTR http_get(const char * url, const char * headers, http_callback user_callback)
 {
-	http_post(url, NULL, headers, user_callback);
+	do_http_post(url, NULL, headers, user_callback, false);
+}
+
+void ICACHE_FLASH_ATTR http_get_streaming(const char * url, const char * headers, http_callback user_callback)
+{
+	do_http_post(url, NULL, headers, user_callback, true);
 }
 
 void ICACHE_FLASH_ATTR http_callback_example(char * response_body, int http_status, char * response_headers, int body_size)
@@ -505,3 +721,4 @@ void ICACHE_FLASH_ATTR http_callback_example(char * response_body, int http_stat
 		os_printf("body=%s<EOF>\n", response_body); // FIXME: this does not handle binary data.
 	}
 }
+
