@@ -15,6 +15,9 @@
 #define HTTP_STATUS_GENERIC_ERROR  -1   // In case of TCP or DNS error the callback is called with this status.
 #define BUFFER_SIZE_MAX            5000 // Size of http responses that will cause an error.
 
+#define HTTP_STATUS_BODY           -2
+#define HTTP_STATUS_DISCONNECT     -3
+
 /*
  * "full_response" is a string containing all response headers and the response body.
  * "response_body and "http_status" are extracted from "full_response" for convenience.
@@ -30,6 +33,7 @@ typedef void (* http_callback)(char * response_body, int http_status, char * res
  * http_get("http://wtfismyip.com/text", http_callback_example);
  */
 void ICACHE_FLASH_ATTR http_get(const char * url, const char * headers, http_callback user_callback);
+void ICACHE_FLASH_ATTR http_get_streaming(const char * url, const char * headers, http_callback user_callback);
 
 /*
  * Post data to a web form.
@@ -38,15 +42,18 @@ void ICACHE_FLASH_ATTR http_get(const char * url, const char * headers, http_cal
  * http_post("http://httpbin.org/post", "first_word=hello&second_word=world", http_callback_example);
  */
 void ICACHE_FLASH_ATTR http_post(const char * url, const char * post_data, const char * headers, http_callback user_callback);
+void ICACHE_FLASH_ATTR http_post_streaming(const char * url, const char * post_data, const char * headers, http_callback user_callback);
 
 /*
  * Call this function to skip URL parsing if the arguments are already in separate variables.
  */
 void ICACHE_FLASH_ATTR http_raw_request(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback);
+void ICACHE_FLASH_ATTR http_raw_request_streaming(const char * hostname, int port, bool secure, const char * path, const char * post_data, const char * headers, http_callback user_callback);
 
 /*
  * Output on the UART.
  */
 void ICACHE_FLASH_ATTR http_callback_example(char * response_body, int http_status, char * response_headers, int body_size);
+void ICACHE_FLASH_ATTR http_callback_example_streaming(char * response_body, int http_status, char * response_headers, int body_size);
 
 #endif

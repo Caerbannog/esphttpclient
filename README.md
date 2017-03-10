@@ -62,6 +62,24 @@ void http_callback_example(char * response_body, int http_status, char * respons
 }
 ```
 
+### Streaming responses
+There are also "streaming" versions of `http_get` and `http_post`.
+Their interface is the same, just append `_request` to the function name.
+Streaming is useful when the response is potentially too large to fit in the
+(heap) memory of the ESP8266 and thus can't be fully buffered. Instead,
+`user_callback` is called whenever there is new response data available.
+
+When a response arrives, the callback is first called with `http_status` containing
+the status code and `response_headers` containing the headers. `response_body` is
+`NULL` on the first call. Subsequently, when a part of the response body is received,
+`user_callback` will be called with `http_status == HTTP_STATUS_BODY` and `response_body`
+containing the received part. There may be many of these calls depending on the response size.
+
+Finally, to tell the user that the data stream has closed, `user_callback` will be
+called with `http_status == HTTP_STATUS_DISCONNECT`. There is no other data passed to the callback.
+
+See `http_callback_example_streaming` in [httpclient.c](httpclient.c).
+
 ## Example
 The following code performs a single request, then calls `http_callback_example` to display your public IP address.
 ```c
