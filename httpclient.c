@@ -321,6 +321,7 @@ static void ICACHE_FLASH_ATTR disconnect_callback(void * arg)
 				if(os_strstr(req->buffer, "Transfer-Encoding: chunked"))
 				{
 					body_size = chunked_decode(body, body_size);
+					body[body_size] = '\0';
 				}
 			}
 		}
